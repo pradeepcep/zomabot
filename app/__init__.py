@@ -1,7 +1,23 @@
 from flask import *
+import requests
+import json
 import os
 
 app = Flask(__name__)
+
+
+# To make testing easier.
+DEBUG = False
+if os.environ.get('ZOMABOT_DEBUG') and os.environ.get('ZOMABOT_DEBUG') == '1':
+    DEBUG = True
+
+
+def simple_log(log_message):
+    '''
+    Print the `log_message` to the console if in DEBUG mode.
+    '''
+    if DEBUG:
+        print log_message
 
 
 # Some tokens and keys used by the app.
@@ -34,6 +50,55 @@ def webhook():
 # POST request to the webhook is used for events.
 @app.route('/webhook', methods=['POST'])
 def events():
-    # For now, just log that we received something.
-    print "Received a POST request!\n"
+    # Get the posted data.
+    message_response = json.loads(request.get_data())
+
+    # Then, extract the message text.
+    sender_id = message_response['entry'][0]['messaging'][0]['sender']['id']
+    message_body = message_response['entry'][0]['messaging'][0]['message']
+    simple_log("sender_id: %s\nmessage_body: %s" % (sender_id, message_body))
+    if message_body.get('text'):
+        message_text = message_body['text']
+        send_message(sender_id, generate_reply(message_text))
     return '', 200
+
+
+# Some functions to make life easier.
+def send_message(to_id, message):
+    '''
+    Send the specified `message` to the user with ID `to_id`.
+    Returns `True` if message is sent successfully, `False` otherwise.
+    '''
+    r = requests.post(
+        'https://graph.facebook.com/v2.6/me/messages',
+        params={
+            'access_token': app.config['PAGE_TOKEN']
+        },
+        data=json.dumps({
+            "recipient": {
+                "id": to_id,
+            },
+            "message": {
+                "text": message,
+            }
+        }),
+        headers={
+            "Content-Type": "application/json",
+        })
+    simple_log("Sending response: %s\n" % (message))
+    simple_log(r.text)
+    return r.status_code == requests.codes.ok
+
+
+def generate_reply(message):
+    '''
+    Generate a suitable reply for the given `message`.
+    '''
+    message = message.lower()
+    # Say 'hi'.
+    if 'hi' in message or 'hey' in message:
+        return 'Hey you!'
+
+    # When we don't understand something.
+    else:
+        return 'Sorry, what was that again?'
