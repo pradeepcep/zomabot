@@ -7,12 +7,15 @@ app = Flask(__name__)
 # Some tokens and keys used by the app.
 app.config['VERIFY_TOKEN'] = '<you could hard-code your token here>'
 app.config['PAGE_TOKEN'] = '<you could hard-code your page token here>'
+app.config['ZOMATO_API_KEY'] = '<your zomato api key>'
 
 # Or set environment variables to override them.
 if os.environ.get('VERIFY_TOKEN'):
     app.config['VERIFY_TOKEN'] = os.environ.get('VERIFY_TOKEN')
 if os.environ.get('PAGE_TOKEN'):
     app.config['PAGE_TOKEN'] = os.environ.get('PAGE_TOKEN')
+if os.environ.get('ZOMATO_API_KEY'):
+    app.config['ZOMATO_API_KEY'] = os.environ.get('ZOMATO_API_KEY')
 
 
 @app.route('/')
