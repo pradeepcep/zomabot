@@ -59,16 +59,18 @@ def events():
     simple_log("sender_id: %s\nmessage_body: %s" % (sender_id, message_body))
     if message_body.get('text'):
         message_text = message_body['text']
-        send_message(sender_id, generate_reply(message_text))
+        send_message(to_id=sender_id, message=message_text)
     return '', 200
 
 
 # Some functions to make life easier.
-def send_message(to_id, message):
+def send_message(to_id, message, quick_reply):
     '''
     Send the specified `message` to the user with ID `to_id`.
     Returns `True` if message is sent successfully, `False` otherwise.
     '''
+    # The reply that has to sent to the user.
+    reply = generate_reply(message)
     r = requests.post(
         'https://graph.facebook.com/v2.6/me/messages',
         params={
@@ -95,6 +97,12 @@ def generate_reply(message):
     Generate a suitable reply for the given `message`.
     '''
     message = message.lower()
+
+    # Nearby restraunts.
+    if ('near me' in message or 'nearby' in message) \
+            and ('restaurants' in message or 'restaurant' in message):
+        return 'Sure, where are you now?'
+
     # Say 'hi'.
     if 'hi' in message or 'hey' in message:
         return 'Hey you!'
@@ -102,3 +110,14 @@ def generate_reply(message):
     # When we don't understand something.
     else:
         return 'Sorry, what was that again?'
+
+
+def reply_type(message):
+    '''
+    Return the type of reply -- text, asking for location, asking for a
+    choice -- etc. according to the message sent by the user
+    '''
+    # Nearby restraunts.
+    if ('near me' in message or 'nearby' in message) \
+            and ('restaurants' in message or 'restaurant' in message):
+        return 'Sure, where are you now?'
