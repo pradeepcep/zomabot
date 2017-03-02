@@ -62,7 +62,7 @@ def events():
 
 
 # Some functions to make life easier.
-def send_message(to_id, message, quick_replies=[]):
+def send_message(to_id, message='', quick_replies=[], list_elements=[]):
     '''
     Send the specified `message` to the user with ID `to_id`.
 
@@ -70,6 +70,9 @@ def send_message(to_id, message, quick_replies=[]):
     along with the `message`. Currently supported quick replies:
 
         - `location` Ask for Location.
+
+    List elements that are listed in `list_elements` will be shown as a
+    simple list. If set, this will replace the `text`.
 
     Returns `True` if message is sent successfully, `False` otherwise.
     '''
@@ -89,6 +92,24 @@ def send_message(to_id, message, quick_replies=[]):
 
     if quick_replies_data:
         message_data['message']['quick_replies'] = quick_replies_data
+
+    # In case it's a list.
+    if list_elements:
+        message_data = {
+            "recipient": {
+                "id": to_id,
+            },
+            "message": {
+                "attachment": {
+                    "type": "template",
+                    "payload": {
+                        "template_type": "list",
+                        "top_element_style": "compact",
+                        "elements": list_elements,
+                    }
+                }
+            }
+        }
 
     r = requests.post(
         'https://graph.facebook.com/v2.6/me/messages',
@@ -112,18 +133,82 @@ def post_reply(to_id, message_body):
     Returns `True` on successfully posting a reply. `False` otherwise.
     '''
     message = ''
+    # If the message is just text.
     if message_body.get('text'):
         message = message_body['text'].lower()
 
-    # Nearby restraunts.
-    if ('near me' in message or 'nearby' in message) \
-            and ('restaurants' in message or 'restaurant' in message):
-        return send_message(to_id, 'Sure, where are you now?', ['location'])
+        # Nearby restraunts.
+        if ('near me' in message or 'nearby' in message) \
+                and ('restaurants' in message or 'restaurant' in message):
+            return send_message(
+                to_id, 'Sure, where are you now?', ['location'])
 
-    # Say 'hi'.
-    if 'hi' in message or 'hey' in message:
-        return send_message(to_id, 'Hey you!')
+        # Say 'hi'.
+        if 'hi' in message or 'hey' in message:
+            return send_message(to_id, 'Hey you!')
 
-    # When we don't understand something.
+        # When we don't understand something.
+        else:
+            return send_message(to_id, 'Sorry, what was that again?')
+
+    # If it's a non-text message, like location.
+    elif message_body.get('attachments'):
+        # Now determine the type of attachment.
+        if message_body['attachments'][0].get('type') == 'location':
+            lat = message_body['attachments'][
+                0]['payload']['coordinates']['lat']
+            lng = message_body['attachments'][
+                0]['payload']['coordinates']['long']
+            # Query the Zomato API.
+            r = requests.get(
+                'https://developers.zomato.com/api/v2.1/geocode',
+                params={
+                    'lat': lat,
+                    'lon': lng,
+                },
+                headers={
+                    'user-key': app.config['ZOMATO_API_KEY'],
+                    "Content-Type": "application/json",
+                })
+            simple_log('Queried Zomato')
+            simple_log(r.text)
+            top_restaurants = geocode_to_list_elements(json.loads(r.text))
+            send_message(to_id, 'Got your location!')
+            if top_restaurants:
+                send_message(
+                    to_id, 'These are the top places near your location:')
+                return send_message(to_id, list_elements=top_restaurants)
+            return send_message(
+                to_id,
+                "Aw, snap! Couldn't find any places near you, sorry :/")
+        # In case we don't support that attachment.
+        else:
+            return send_message(to_id, "Sorry, I don't understand that :/")
+
+    # Neither `text` nor `attachment` are sent.
     else:
-        return send_message(to_id, 'Sorry, what was that again?')
+        simple_log('Neither text nor attachment set. No reply posted.')
+
+
+def geocode_to_list_elements(response_data):
+    '''
+    Function to create a Messenger-style list template out of the response
+    returned by the /gecode endpoint of Zomato API.
+    '''
+    elements = []
+    for item in response_data.get('nearby_restaurants', []):
+        element = {
+            'title': item['restaurant']['name'],
+            'image_url': item['restaurant']['featured_image'],
+            'subtitle': item['restaurant']['location']['address'],
+            # 'default_action': {
+            #     'type': 'web_url',
+            #     'url': item['restaurant']['menu_url'],
+            #     'messenger_extensions': True,
+            #     'webview_height_ratio': 'tall',
+            #     'fallback_url': item['restaurant']['url']
+            # }
+        }
+        elements.append(element)
+
+    return elements[:4]  # Because a maximum of four elements is only allowed.
