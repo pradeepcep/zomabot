@@ -57,31 +57,45 @@ def events():
     sender_id = message_response['entry'][0]['messaging'][0]['sender']['id']
     message_body = message_response['entry'][0]['messaging'][0]['message']
     simple_log("sender_id: %s\nmessage_body: %s" % (sender_id, message_body))
-    if message_body.get('text'):
-        message_text = message_body['text']
-        send_message(sender_id, generate_reply(message_text))
+    post_reply(sender_id, message_body)
     return '', 200
 
 
 # Some functions to make life easier.
-def send_message(to_id, message):
+def send_message(to_id, message, quick_replies=[]):
     '''
     Send the specified `message` to the user with ID `to_id`.
+
+    Quick replies that are specified in the list of `quick_replies` are sent
+    along with the `message`. Currently supported quick replies:
+
+        - `location` Ask for Location.
+
     Returns `True` if message is sent successfully, `False` otherwise.
     '''
+    quick_replies_data = []
+    for qreply in quick_replies:
+        if qreply == 'location':
+            quick_replies_data.append({"content_type": "location"})
+
+    message_data = {
+        "recipient": {
+            "id": to_id,
+        },
+        "message": {
+            "text": message,
+        }
+    }
+
+    if quick_replies_data:
+        message_data['message']['quick_replies'] = quick_replies_data
+
     r = requests.post(
         'https://graph.facebook.com/v2.6/me/messages',
         params={
             'access_token': app.config['PAGE_TOKEN']
         },
-        data=json.dumps({
-            "recipient": {
-                "id": to_id,
-            },
-            "message": {
-                "text": message,
-            }
-        }),
+        data=json.dumps(message_data),
         headers={
             "Content-Type": "application/json",
         })
@@ -90,15 +104,26 @@ def send_message(to_id, message):
     return r.status_code == requests.codes.ok
 
 
-def generate_reply(message):
+def post_reply(to_id, message_body):
     '''
-    Generate a suitable reply for the given `message`.
+    Generate and post a suitable reply to the user with ID `to_id`,
+    for the given data in `message_body`.
+
+    Returns `True` on successfully posting a reply. `False` otherwise.
     '''
-    message = message.lower()
+    message = ''
+    if message_body.get('text'):
+        message = message_body['text'].lower()
+
+    # Nearby restraunts.
+    if ('near me' in message or 'nearby' in message) \
+            and ('restaurants' in message or 'restaurant' in message):
+        return send_message(to_id, 'Sure, where are you now?', ['location'])
+
     # Say 'hi'.
     if 'hi' in message or 'hey' in message:
-        return 'Hey you!'
+        return send_message(to_id, 'Hey you!')
 
     # When we don't understand something.
     else:
-        return 'Sorry, what was that again?'
+        return send_message(to_id, 'Sorry, what was that again?')
