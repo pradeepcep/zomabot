@@ -1,0 +1,5 @@
+curl -X POST -H "Content-Type: application/json" -d '{
+  "setting_type" : "domain_whitelisting",
+  "whitelisted_domains" : ["https://www.zomato.com", "https://b.zmtcdn.com"],
+  "domain_action_type": "add"
+}' "https://graph.facebook.com/v2.6/me/thread_settings?access_token=$PAGE_TOKEN"

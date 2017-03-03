@@ -201,13 +201,13 @@ def geocode_to_list_elements(response_data):
             'title': item['restaurant']['name'],
             'image_url': item['restaurant']['featured_image'],
             'subtitle': item['restaurant']['location']['address'],
-            # 'default_action': {
-            #     'type': 'web_url',
-            #     'url': item['restaurant']['menu_url'],
-            #     'messenger_extensions': True,
-            #     'webview_height_ratio': 'tall',
-            #     'fallback_url': item['restaurant']['url']
-            # }
+            'default_action': {
+                'type': 'web_url',
+                'url': item['restaurant']['menu_url'],
+                'messenger_extensions': True,
+                'webview_height_ratio': 'tall',
+                'fallback_url': item['restaurant']['url']
+            }
         }
         elements.append(element)
 
