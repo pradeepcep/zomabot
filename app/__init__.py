@@ -1,5 +1,6 @@
 from flask import *
 from celery import Celery
+from wit import Wit
 import requests
 import json
 import os
@@ -26,6 +27,7 @@ app.config['VERIFY_TOKEN'] = '<you could hard-code your token here>'
 app.config['PAGE_TOKEN'] = '<you could hard-code your page token here>'
 app.config['ZOMATO_API_KEY'] = '<your zomato api key>'
 app.config['CELERY_BROKER_URL'] = '<url for the broker you use>'
+app.config['WITAI_TOKEN'] = '<your wit.ai token here>'
 
 # Or set environment variables to override them.
 if os.environ.get('VERIFY_TOKEN'):
@@ -36,11 +38,16 @@ if os.environ.get('ZOMATO_API_KEY'):
     app.config['ZOMATO_API_KEY'] = os.environ.get('ZOMATO_API_KEY')
 if os.environ.get('CELERY_BROKER_URL'):
     app.config['CELERY_BROKER_URL'] = os.environ.get('CELERY_BROKER_URL')
+if os.environ.get('WITAI_TOKEN'):
+    app.config['WITAI_TOKEN'] = os.environ.get('WITAI_TOKEN')
 
 
 # Spin up Celery.
 celery = Celery(app.name, broker=app.config['CELERY_BROKER_URL'])
 celery.conf.update(app.config)
+
+# Spin up WitAI.
+wit = Wit(access_token=app.config['WITAI_TOKEN'])
 
 
 @app.route('/')
@@ -134,6 +141,19 @@ def send_message(to_id, message='', quick_replies=[], list_elements=[]):
     return r.status_code == requests.codes.ok
 
 
+def process_message(to_id, message):
+    message_details = {}
+    wit_response = wit.message(message)
+    simple_log(str(wit_response))
+    if wit_response.get('entities'):
+        if wit_response['entities'].get('intent'):
+            if wit_response['entities']['intent'][0].get('value'):
+                message_details['intent'] = wit_response['entities'][
+                        'intent'][0]['value']
+
+    return message_details
+
+
 @celery.task
 def post_reply(to_id, message_body):
     '''
@@ -147,14 +167,16 @@ def post_reply(to_id, message_body):
     if message_body.get('text'):
         message = message_body['text'].lower()
 
+        message_details = process_message(to_id, message)
+        simple_log(str(message_details))
+
         # Nearby restraunts.
-        if ('near me' in message or 'nearby' in message) \
-                and ('restaurants' in message or 'restaurant' in message):
+        if message_details.get('intent') == 'search':
             return send_message(
                 to_id, 'Sure, where are you now?', ['location'])
 
         # Say 'hi'.
-        if 'hi' in message or 'hey' in message:
+        elif message_details.get('intent') == 'greeting':
             return send_message(to_id, 'Hey you!')
 
         # When we don't understand something.
