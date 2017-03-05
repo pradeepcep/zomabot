@@ -1,0 +1,3 @@
+# Before you run this script, please set the $CELERY_BROKER_URL
+# environment variable.
+celery worker -A app.celery --broker=$CELERY_BROKER_URL

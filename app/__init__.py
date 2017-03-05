@@ -1,4 +1,5 @@
 from flask import *
+from celery import Celery
 import requests
 import json
 import os
@@ -24,6 +25,7 @@ def simple_log(log_message):
 app.config['VERIFY_TOKEN'] = '<you could hard-code your token here>'
 app.config['PAGE_TOKEN'] = '<you could hard-code your page token here>'
 app.config['ZOMATO_API_KEY'] = '<your zomato api key>'
+app.config['CELERY_BROKER_URL'] = '<url for the broker you use>'
 
 # Or set environment variables to override them.
 if os.environ.get('VERIFY_TOKEN'):
@@ -32,6 +34,13 @@ if os.environ.get('PAGE_TOKEN'):
     app.config['PAGE_TOKEN'] = os.environ.get('PAGE_TOKEN')
 if os.environ.get('ZOMATO_API_KEY'):
     app.config['ZOMATO_API_KEY'] = os.environ.get('ZOMATO_API_KEY')
+if os.environ.get('CELERY_BROKER_URL'):
+    app.config['CELERY_BROKER_URL'] = os.environ.get('CELERY_BROKER_URL')
+
+
+# Spin up Celery.
+celery = Celery(app.name, broker=app.config['CELERY_BROKER_URL'])
+celery.conf.update(app.config)
 
 
 @app.route('/')
@@ -57,7 +66,7 @@ def events():
     sender_id = message_response['entry'][0]['messaging'][0]['sender']['id']
     message_body = message_response['entry'][0]['messaging'][0]['message']
     simple_log("sender_id: %s\nmessage_body: %s" % (sender_id, message_body))
-    post_reply(sender_id, message_body)
+    post_reply.delay(sender_id, message_body)
     return '', 200
 
 
@@ -125,6 +134,7 @@ def send_message(to_id, message='', quick_replies=[], list_elements=[]):
     return r.status_code == requests.codes.ok
 
 
+@celery.task
 def post_reply(to_id, message_body):
     '''
     Generate and post a suitable reply to the user with ID `to_id`,
