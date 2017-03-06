@@ -1,6 +1,7 @@
 from flask import *
 from celery import Celery
 from wit import Wit
+from redis import StrictRedis
 import requests
 import json
 import os
@@ -28,6 +29,7 @@ app.config['PAGE_TOKEN'] = '<you could hard-code your page token here>'
 app.config['ZOMATO_API_KEY'] = '<your zomato api key>'
 app.config['CELERY_BROKER_URL'] = '<url for the broker you use>'
 app.config['WITAI_TOKEN'] = '<your wit.ai token here>'
+app.config['REDIS_DB_URL'] = '<redis db url eg. redis://localhost:6379/1>'
 
 # Or set environment variables to override them.
 if os.environ.get('VERIFY_TOKEN'):
@@ -40,6 +42,8 @@ if os.environ.get('CELERY_BROKER_URL'):
     app.config['CELERY_BROKER_URL'] = os.environ.get('CELERY_BROKER_URL')
 if os.environ.get('WITAI_TOKEN'):
     app.config['WITAI_TOKEN'] = os.environ.get('WITAI_TOKEN')
+if os.environ.get('REDIS_DB_URL'):
+    app.config['REDIS_DB_URL'] = os.environ.get('REDIS_DB_URL')
 
 
 # Spin up Celery.
@@ -48,6 +52,9 @@ celery.conf.update(app.config)
 
 # Spin up WitAI.
 wit = Wit(access_token=app.config['WITAI_TOKEN'])
+
+# Spin up Redis.
+redis = StrictRedis.from_url(app.config['REDIS_DB_URL'])
 
 
 @app.route('/')
@@ -142,16 +149,61 @@ def send_message(to_id, message='', quick_replies=[], list_elements=[]):
 
 
 def process_message(to_id, message):
-    message_details = {}
+    message_details = {
+        'intent': None,
+    }
     wit_response = wit.message(message)
     simple_log(str(wit_response))
+
     if wit_response.get('entities'):
         if wit_response['entities'].get('intent'):
             if wit_response['entities']['intent'][0].get('value'):
                 message_details['intent'] = wit_response['entities'][
                         'intent'][0]['value']
 
+    record_context(to_id, message_details['intent'])
     return message_details
+
+
+def record_context(to_id, context):
+    '''
+    Records the context of a message, to be used by get_message_context()
+    later.
+    '''
+    redis.rpush(str(to_id), context)
+    return
+
+
+def get_context(to_id):
+    '''
+    Function that guesses the context of the current message based on
+    previous messages.
+
+    Returns a string defining the context.
+    Returns an empty string if the context cannot be defined.
+    '''
+    # Read the previous message's intent.
+    context_list = redis.lrange(str(to_id), 0, -1)
+
+    # If the previous message was a search, then the response is an answer
+    # to our question about where the user is.
+    if context_list[-1] == 'search':
+        return 'location'
+
+    # If the user mis-spells the location, or the Zomato API doesn't recognize
+    # it.
+    if context_list[-1] == 'None' and context_list[-2] == 'search':
+        return 'location'
+
+    return ''
+
+
+def clear_context(to_id):
+    '''
+    Clear the context for a user. Any messages after this will be treated as a
+    fresh conversation.
+    '''
+    redis.delete(str(to_id))
 
 
 @celery.task
@@ -167,6 +219,7 @@ def post_reply(to_id, message_body):
     if message_body.get('text'):
         message = message_body['text'].lower()
 
+        message_context = get_context(to_id)
         message_details = process_message(to_id, message)
         simple_log(str(message_details))
 
@@ -178,6 +231,38 @@ def post_reply(to_id, message_body):
         # Say 'hi'.
         elif message_details.get('intent') == 'greeting':
             return send_message(to_id, 'Hey you!')
+
+        # If the user replies with place name instead of tapping on
+        # 'Send location', or cannot, as in the case of messenger on desktop.
+        elif message_context == 'location':
+            possible_coordinates = city_name_to_coordinates(message)
+            if possible_coordinates:
+                r = requests.get(
+                    'https://developers.zomato.com/api/v2.1/geocode',
+                    params={
+                        'lat': possible_coordinates['lat'],
+                        'lon': possible_coordinates['lon'],
+                    },
+                    headers={
+                        'user-key': app.config['ZOMATO_API_KEY'],
+                        "Content-Type": "application/json",
+                    })
+                simple_log('Queried Zomato #2')
+                simple_log(r.text)
+                top_restaurants = geocode_to_list_elements(json.loads(r.text))
+                send_message(to_id, 'Got your location!')
+                if top_restaurants:
+                    send_message(
+                        to_id, 'These are the top places near your location:')
+                    return send_message(to_id, list_elements=top_restaurants)
+                return send_message(
+                    to_id,
+                    "Aw, snap! Couldn't find any places near you, sorry :/")
+            else:
+                return send_message(
+                    to_id,
+                    'Sorry, I cannot find that place. '
+                    'Maybe it\'s written differently?')
 
         # When we don't understand something.
         else:
@@ -244,3 +329,33 @@ def geocode_to_list_elements(response_data):
         elements.append(element)
 
     return elements[:4]  # Because a maximum of four elements is only allowed.
+
+
+def city_name_to_coordinates(name):
+    '''
+    Gets the co-ordinates of a city so that it can be used with the /geocode
+    endpoint.
+    '''
+    if name:
+        r = requests.get(
+            'https://developers.zomato.com/api/v2.1/locations',
+            params={
+                'query': name,
+                'count': 1,
+            },
+            headers={
+                'user-key': app.config['ZOMATO_API_KEY'],
+                "Content-Type": "application/json",
+            })
+        simple_log('Queried Zomato for city name')
+        simple_log(r.text)
+        possible_location = json.loads(r.text)
+        if possible_location.get('location_suggestions'):
+            return {
+                'lat': possible_location['location_suggestions'][
+                        0]['latitude'],
+                'lon': possible_location['location_suggestions'][
+                        0]['longitude']
+            }
+
+    return {}
